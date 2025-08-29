@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+
+import sys
+import os
+import json
+import requests
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+load_dotenv()
+
+API_KEY = os.getenv('TODOIST_API_KEY')
+BASE_URL = 'https://api.todoist.com/rest/v2'
+
+def get_headers():
+    return {
+        'Authorization': f'Bearer {API_KEY}',
+        'Content-Type': 'application/json'
+    }
+
+def create_task(content, due_string=None, project_name=None):
+    url = f'{BASE_URL}/tasks'
+    data = {'content': content}
+
+    if due_string:
+        data['due_string'] = due_string
+
+    if project_name:
+        # Get projects to find the ID
+        projects_url = f'{BASE_URL}/projects'
+        response = requests.get(projects_url, headers=get_headers())
+        if response.status_code == 200:
+            projects = response.json()
+            # Case-insensitive search for project
+            for project in projects:
+                if project['name'].lower() == project_name.lower():
+                    data['project_id'] = project['id']
+                    break
+            else:
+                # Create project if it doesn't exist
+                create_proj_response = requests.post(projects_url,
+                    headers=get_headers(),
+                    json={'name': project_name})
+                if create_proj_response.status_code == 200:
+                    data['project_id'] = create_proj_response.json()['id']
+
+    response = requests.post(url, headers=get_headers(), json=data)
+    if response.status_code == 200:
+        print("✓ Task created!")
+    else:
+        print(f"Error: {response.status_code}")
+
+def list_tasks(filter_type):
+    url = f'{BASE_URL}/tasks'
+    response = requests.get(url, headers=get_headers())
+
+    if response.status_code == 200:
+        tasks = response.json()
+
+        # Filter tasks by due date
+        target_date = None
+        if filter_type == 'today':
+            target_date = datetime.now().date()
+        elif filter_type == 'tomorrow':
+            target_date = (datetime.now() + timedelta(days=1)).date()
+
+        filtered_tasks = []
+        for task in tasks:
+            if task.get('due'):
+                task_date_str = task['due'].get('date')
+                if task_date_str:
+                    task_date = datetime.strptime(task_date_str, '%Y-%m-%d').date()
+                    if task_date == target_date:
+                        filtered_tasks.append(task)
+
+        if filtered_tasks:
+            print(f"\n{filter_type.capitalize()} tasks:")
+            for i, task in enumerate(filtered_tasks, 1):
+                status = "☐" if not task.get('is_completed') else "☑"
+                print(f"{status} {i}. {task['content']}")
+        else:
+            print(f"No tasks for {filter_type}")
+    else:
+        print(f"Error: {response.status_code}")
+
+def list_project_tasks(project_name):
+    url = f'{BASE_URL}/tasks'
+    response = requests.get(url, headers=get_headers())
+
+    if response.status_code == 200:
+        tasks = response.json()
+        
+        # Get project ID
+        projects_url = f'{BASE_URL}/projects'
+        proj_response = requests.get(projects_url, headers=get_headers())
+        project_id = None
+        
+        if proj_response.status_code == 200:
+            projects = proj_response.json()
+            for project in projects:
+                if project['name'].lower() == project_name.lower():
+                    project_id = project['id']
+                    break
+        
+        if not project_id:
+            print(f"Project '{project_name}' not found")
+            return
+        
+        # Filter tasks by project
+        filtered_tasks = []
+        for task in tasks:
+            if task.get('project_id') == project_id:
+                filtered_tasks.append(task)
+
+        if filtered_tasks:
+            print(f"\n#{project_name} project tasks:")
+            for i, task in enumerate(filtered_tasks, 1):
+                status = "☐" if not task.get('is_completed') else "☑"
+                print(f"{status} {i}. {task['content']}")
+        else:
+            print(f"No tasks in #{project_name} project")
+    else:
+        print(f"Error: {response.status_code}")
+
+def interactive_mode(filter_type):
+    url = f'{BASE_URL}/tasks'
+    response = requests.get(url, headers=get_headers())
+
+    if response.status_code != 200:
+        print(f"Error: {response.status_code}")
+        return
+
+    tasks = response.json()
+
+    # Check if it's a project name or a due date filter
+    if filter_type in ['today', 'tomorrow']:
+        # Filter tasks by due date
+        target_date = None
+        if filter_type == 'today':
+            target_date = datetime.now().date()
+        elif filter_type == 'tomorrow':
+            target_date = (datetime.now() + timedelta(days=1)).date()
+        
+        filtered_tasks = []
+        for task in tasks:
+            if task.get('due') and not task.get('is_completed'):
+                task_date_str = task['due'].get('date')
+                if task_date_str:
+                    task_date = datetime.strptime(task_date_str, '%Y-%m-%d').date()
+                    if task_date == target_date:
+                        filtered_tasks.append(task)
+    else:
+        # Filter by project name
+        projects_url = f'{BASE_URL}/projects'
+        proj_response = requests.get(projects_url, headers=get_headers())
+        project_id = None
+        
+        if proj_response.status_code == 200:
+            projects = proj_response.json()
+            for project in projects:
+                if project['name'].lower() == filter_type.lower():
+                    project_id = project['id']
+                    break
+        
+        if not project_id:
+            print(f"Project '{filter_type}' not found")
+            return
+        
+        filtered_tasks = []
+        for task in tasks:
+            if task.get('project_id') == project_id and not task.get('is_completed'):
+                filtered_tasks.append(task)
+
+    if not filtered_tasks:
+        if filter_type in ['today', 'tomorrow']:
+            print(f"No incomplete tasks for {filter_type}")
+        else:
+            print(f"No incomplete tasks in #{filter_type} project")
+        return
+
+    if filter_type in ['today', 'tomorrow']:
+        print(f"\n{filter_type.capitalize()} tasks (press number to toggle completion, 'q' to quit):")
+    else:
+        print(f"\n#{filter_type} project tasks (press number to toggle completion, 'q' to quit):")
+
+    while True:
+        print("\n" + "-" * 40)
+        for i, task in enumerate(filtered_tasks, 1):
+            print(f"{i}. {task['content']}")
+
+        print("\nEnter task number to complete (or 'q' to quit): ", end='')
+        choice = input().strip()
+
+        if choice.lower() == 'q':
+            break
+
+        try:
+            task_num = int(choice) - 1
+            if 0 <= task_num < len(filtered_tasks):
+                task = filtered_tasks[task_num]
+                # Complete the task
+                complete_url = f"{BASE_URL}/tasks/{task['id']}/close"
+                response = requests.post(complete_url, headers=get_headers())
+                if response.status_code == 204:
+                    print(f"✓ Completed: {task['content']}")
+                    filtered_tasks.pop(task_num)
+                    if not filtered_tasks:
+                        print("\nAll tasks completed! 🎉")
+                        break
+                else:
+                    print(f"Error completing task: {response.status_code}")
+            else:
+                print("Invalid task number")
+        except ValueError:
+            print("Please enter a valid number or 'q'")
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  todo today \"Task description\"     - Create task for today")
+        print("  todo tomorrow \"Task description\"  - Create task for tomorrow")
+        print("  todo today list                   - List today's tasks")
+        print("  todo tomorrow list                - List tomorrow's tasks")
+        print("  todo -i today                     - Interactive mode for today")
+        print("  todo -i tomorrow                  - Interactive mode for tomorrow")
+        print("  todo -i shopping                  - Interactive mode for Shopping project")
+        print("  todo shopping \"Item\"              - Add to Shopping project")
+        print("  todo shopping list                - List Shopping project tasks")
+        sys.exit(1)
+
+    # Interactive mode (format: todo -i <filter>)
+    if sys.argv[1] == '-i' and len(sys.argv) == 3:
+        interactive_mode(sys.argv[2])
+        sys.exit(0)
+    
+    # Interactive mode (format: todo <project> -i)
+    if len(sys.argv) == 3 and sys.argv[2] == '-i':
+        interactive_mode(sys.argv[1])
+        sys.exit(0)
+
+    # List mode
+    if len(sys.argv) == 3 and sys.argv[2] == 'list':
+        filter_name = sys.argv[1]
+        if filter_name in ['today', 'tomorrow']:
+            list_tasks(filter_name)
+        else:
+            # List project tasks
+            list_project_tasks(filter_name)
+        sys.exit(0)
+
+    # Create task mode
+    if len(sys.argv) == 3:
+        command = sys.argv[1]
+        task_content = sys.argv[2]
+
+        if command == 'today':
+            create_task(task_content, 'today')
+        elif command == 'tomorrow':
+            create_task(task_content, 'tomorrow')
+        else:
+            # Assume it's a project name (like 'shopping')
+            create_task(task_content, project_name=command)
+    else:
+        print("Error: Invalid command format")
+
+if __name__ == '__main__':
+    main()
