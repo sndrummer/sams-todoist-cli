@@ -2,12 +2,12 @@
 
 import sys
 import os
-import json
 import requests
 import termios
 import tty
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import time
 
 load_dotenv()
 
@@ -31,294 +31,131 @@ def get_headers():
         'Content-Type': 'application/json'
     }
 
-def create_task(content, due_string=None, project_name=None, silent=False):
-    url = f'{BASE_URL}/tasks'
-    data = {'content': content}
+def get_projects():
+    url = f'{BASE_URL}/projects'
+    response = requests.get(url, headers=get_headers())
+    return response.json() if response.status_code == 200 else []
 
+def get_project_id(project_name, create_if_missing=False):
+    projects = get_projects()
+    for project in projects:
+        if project['name'].lower() == project_name.lower():
+            return project['id']
+    if create_if_missing:
+        response = requests.post(f'{BASE_URL}/projects', headers=get_headers(), json={'name': project_name})
+        return response.json()['id'] if response.status_code == 200 else None
+    return None
+
+def fetch_tasks():
+    url = f'{BASE_URL}/tasks'
+    response = requests.get(url, headers=get_headers())
+    return response.json() if response.status_code == 200 else []
+
+def filter_tasks(tasks, filter_type):
+    if filter_type in ['today', 'tomorrow']:
+        target_date = datetime.now().date() if filter_type == 'today' else (datetime.now() + timedelta(days=1)).date()
+        return [t for t in tasks if t.get('due') and not t.get('is_completed', False) and
+                datetime.strptime(t['due']['date'], '%Y-%m-%d').date() == target_date]
+    else:
+        project_id = get_project_id(filter_type)
+        if not project_id:
+            return []
+        return [t for t in tasks if t.get('project_id') == project_id and not t.get('is_completed', False)]
+
+def create_task(content, due_string=None, project_name=None, silent=False):
+    data = {'content': content}
     if due_string:
         data['due_string'] = due_string
-
     if project_name:
-        # Get projects to find the ID
-        projects_url = f'{BASE_URL}/projects'
-        response = requests.get(projects_url, headers=get_headers())
-        if response.status_code == 200:
-            projects = response.json()
-            # Case-insensitive search for project
-            for project in projects:
-                if project['name'].lower() == project_name.lower():
-                    data['project_id'] = project['id']
-                    break
-            else:
-                # Create project if it doesn't exist
-                create_proj_response = requests.post(projects_url,
-                    headers=get_headers(),
-                    json={'name': project_name})
-                if create_proj_response.status_code == 200:
-                    data['project_id'] = create_proj_response.json()['id']
-
-    response = requests.post(url, headers=get_headers(), json=data)
+        data['project_id'] = get_project_id(project_name, create_if_missing=True)
+    response = requests.post(f'{BASE_URL}/tasks', headers=get_headers(), json=data)
     if not silent:
-        if response.status_code == 200:
-            print("✓ Task created!")
-        else:
-            print(f"Error: {response.status_code}")
+        print("✓ Task created!" if response.status_code == 200 else f"Error: {response.status_code}")
     return response.status_code == 200
 
 def list_tasks(filter_type):
-    url = f'{BASE_URL}/tasks'
-    response = requests.get(url, headers=get_headers())
-
-    if response.status_code == 200:
-        tasks = response.json()
-
-        # Filter tasks by due date
-        target_date = None
-        if filter_type == 'today':
-            target_date = datetime.now().date()
-        elif filter_type == 'tomorrow':
-            target_date = (datetime.now() + timedelta(days=1)).date()
-
-        filtered_tasks = []
-        for task in tasks:
-            if task.get('due'):
-                task_date_str = task['due'].get('date')
-                if task_date_str:
-                    task_date = datetime.strptime(task_date_str, '%Y-%m-%d').date()
-                    if task_date == target_date:
-                        filtered_tasks.append(task)
-
-        if filtered_tasks:
-            print(f"\n{filter_type.capitalize()} tasks:")
-            for i, task in enumerate(filtered_tasks, 1):
-                print(f"{i}. {task['content']}")
-        else:
-            print(f"No tasks for {filter_type}")
-    else:
-        print(f"Error: {response.status_code}")
-
-def list_project_tasks(project_name):
-    url = f'{BASE_URL}/tasks'
-    response = requests.get(url, headers=get_headers())
-
-    if response.status_code == 200:
-        tasks = response.json()
-        
-        # Get project ID
-        projects_url = f'{BASE_URL}/projects'
-        proj_response = requests.get(projects_url, headers=get_headers())
-        project_id = None
-        
-        if proj_response.status_code == 200:
-            projects = proj_response.json()
-            for project in projects:
-                if project['name'].lower() == project_name.lower():
-                    project_id = project['id']
-                    break
-        
-        if not project_id:
-            print(f"Project '{project_name}' not found")
-            return
-        
-        # Filter tasks by project
-        filtered_tasks = []
-        for task in tasks:
-            if task.get('project_id') == project_id:
-                filtered_tasks.append(task)
-
-        if filtered_tasks:
-            print(f"\n{project_name.capitalize()} tasks:")
-            for i, task in enumerate(filtered_tasks, 1):
-                print(f"{i}. {task['content']}")
-        else:
-            print(f"No tasks in {project_name}")
-    else:
-        print(f"Error: {response.status_code}")
+    tasks = fetch_tasks()
+    filtered = filter_tasks(tasks, filter_type)
+    if not filtered:
+        print(f"No tasks for {filter_type}")
+        return
+    print(f"\n{filter_type.capitalize()} tasks:")
+    for i, task in enumerate(filtered, 1):
+        print(f"{i}. {task['content']}")
 
 def get_single_char():
-    """Get a single character from stdin."""
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(sys.stdin.fileno())
         ch = sys.stdin.read(1)
-        # Handle arrow keys (they send escape sequences)
         if ch == '\x1b':
             ch2 = sys.stdin.read(1)
             ch3 = sys.stdin.read(1)
             if ch2 == '[':
-                if ch3 == 'A':
-                    return 'UP'
-                elif ch3 == 'B':
-                    return 'DOWN'
+                return 'UP' if ch3 == 'A' else 'DOWN' if ch3 == 'B' else ch3
         return ch
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 def clear_lines(n):
-    """Clear n lines above the cursor."""
     for _ in range(n):
         print('\033[1A\033[2K', end='')
-    print('\r', end='')  # Move cursor to beginning of line
+    print('\r', end='')
 
 def interactive_mode(filter_type):
-    url = f'{BASE_URL}/tasks'
-    response = requests.get(url, headers=get_headers())
-
-    if response.status_code != 200:
-        print(f"Error: {response.status_code}")
-        return
-
-    tasks = response.json()
-
-    # Check if it's a project name or a due date filter
-    if filter_type in ['today', 'tomorrow']:
-        # Filter tasks by due date
-        target_date = None
-        if filter_type == 'today':
-            target_date = datetime.now().date()
-        elif filter_type == 'tomorrow':
-            target_date = (datetime.now() + timedelta(days=1)).date()
-        
-        filtered_tasks = []
-        for task in tasks:
-            if task.get('due') and not task.get('is_completed'):
-                task_date_str = task['due'].get('date')
-                if task_date_str:
-                    task_date = datetime.strptime(task_date_str, '%Y-%m-%d').date()
-                    if task_date == target_date:
-                        filtered_tasks.append(task)
-    else:
-        # Filter by project name
-        projects_url = f'{BASE_URL}/projects'
-        proj_response = requests.get(projects_url, headers=get_headers())
-        project_id = None
-        
-        if proj_response.status_code == 200:
-            projects = proj_response.json()
-            for project in projects:
-                if project['name'].lower() == filter_type.lower():
-                    project_id = project['id']
-                    break
-        
-        if not project_id:
-            print(f"Project '{filter_type}' not found")
-            return
-        
-        filtered_tasks = []
-        for task in tasks:
-            if task.get('project_id') == project_id and not task.get('is_completed'):
-                filtered_tasks.append(task)
-
-    if not filtered_tasks:
-        if filter_type in ['today', 'tomorrow']:
-            print(f"No incomplete tasks for {filter_type}")
-        else:
-            print(f"No incomplete tasks in {filter_type}")
+    project_id = get_project_id(filter_type) if filter_type not in ['today', 'tomorrow'] else None
+    if filter_type not in ['today', 'tomorrow'] and not project_id:
+        print(f"Project '{filter_type}' not found")
         return
 
     def refresh_tasks():
-        """Refresh the task list from the API."""
-        nonlocal filtered_tasks
-        response = requests.get(url, headers=get_headers())
-        if response.status_code != 200:
-            return False
-        
-        tasks = response.json()
-        new_filtered_tasks = []
-        
-        if filter_type in ['today', 'tomorrow']:
-            target_date = None
-            if filter_type == 'today':
-                target_date = datetime.now().date()
-            elif filter_type == 'tomorrow':
-                target_date = (datetime.now() + timedelta(days=1)).date()
-            
-            for task in tasks:
-                if task.get('due') and not task.get('is_completed'):
-                    task_date_str = task['due'].get('date')
-                    if task_date_str:
-                        task_date = datetime.strptime(task_date_str, '%Y-%m-%d').date()
-                        if task_date == target_date:
-                            new_filtered_tasks.append(task)
-        else:
-            if project_id:
-                for task in tasks:
-                    if task.get('project_id') == project_id and not task.get('is_completed'):
-                        new_filtered_tasks.append(task)
-        
-        filtered_tasks = new_filtered_tasks
-        return True
+        tasks = fetch_tasks()
+        return filter_tasks(tasks, filter_type)
+
+    filtered_tasks = refresh_tasks()
+    if not filtered_tasks:
+        print(f"No incomplete tasks for {filter_type}")
+        return
 
     def display_tasks(current_idx, full_redraw=False, initial=False):
-        """Display tasks with the current selection highlighted."""
         if full_redraw:
-            # Show header only on full redraw
             header_text = filter_type.upper()
-            padding = max(0, (32 - len(header_text)) // 2)  # Reduced to 32
+            padding = max(0, (32 - len(header_text)) // 2)
             line = "═" * padding
-            # Only add newline for the very first display
             if initial:
                 print(f"\n{Colors.CYAN}{Colors.BOLD}{line} {header_text} {line}{Colors.RESET}")
             else:
                 print(f"{Colors.CYAN}{Colors.BOLD}{line} {header_text} {line}{Colors.RESET}")
         else:
-            # Move up to start of tasks and clear everything from there
-            # We need to go up: all tasks + blank line + instruction line
-            print(f'\033[{len(filtered_tasks) + 2}A', end='')  # Move up
-            print('\033[J', end='')  # Clear from cursor to end of screen
-        
-        # Display tasks
+            print(f'\033[{len(filtered_tasks) + 2}A', end='')
+            print('\033[J', end='')
         for i, task in enumerate(filtered_tasks):
             if i == current_idx:
                 print(f"{Colors.GREEN}{Colors.BOLD}➤{Colors.RESET} {Colors.GREEN}{task['content']}{Colors.RESET}")
             else:
                 print(f"  {Colors.DIM}{task['content']}{Colors.RESET}")
-        
-        # Instructions
         print(f"\n{Colors.MAGENTA}Enter: Complete | a: Add | e: Edit | d: Delete | r: Refresh | q: Quit{Colors.RESET}")
 
-
     current_idx = 0
-    first_display = True
-    
-    # Initial display
     display_tasks(current_idx, full_redraw=True, initial=True)
-    
+
     while filtered_tasks:
-        # Get user input
         ch = get_single_char()
-        
-        if ch in ['q', 'Q', '\x03']:  # q or Ctrl+C
-            # Clear everything including header
+        if ch in ['q', 'Q', '\x03']:
             clear_lines(len(filtered_tasks) + 3)
             break
-        elif ch in ['UP', 'k', 'K']:  # Up arrow or k
-            new_idx = max(0, current_idx - 1)
-            if new_idx != current_idx:
-                current_idx = new_idx
-                display_tasks(current_idx, full_redraw=False)
-        elif ch in ['DOWN', 'j', 'J']:  # Down arrow or j
-            new_idx = min(len(filtered_tasks) - 1, current_idx + 1)
-            if new_idx != current_idx:
-                current_idx = new_idx
-                display_tasks(current_idx, full_redraw=False)
-        elif ch in ['h', 'H']:  # Vim left (same as up in this context)
-            new_idx = max(0, current_idx - 1)
-            if new_idx != current_idx:
-                current_idx = new_idx
-                display_tasks(current_idx, full_redraw=False)
-        elif ch in ['l', 'L']:  # Vim right (same as down in this context)
-            new_idx = min(len(filtered_tasks) - 1, current_idx + 1)
-            if new_idx != current_idx:
-                current_idx = new_idx
-                display_tasks(current_idx, full_redraw=False)
-        elif ch in ['\r', '\n', 'c', 'C']:  # Enter or c - Complete task
+        elif ch in ['UP', 'k', 'K', 'h', 'H']:
+            current_idx = max(0, current_idx - 1)
+            display_tasks(current_idx)
+        elif ch in ['DOWN', 'j', 'J', 'l', 'L']:
+            current_idx = min(len(filtered_tasks) - 1, current_idx + 1)
+            display_tasks(current_idx)
+        elif ch in ['\r', '\n', 'c', 'C']:  # Complete
             task = filtered_tasks[current_idx]
-            complete_url = f"{BASE_URL}/tasks/{task['id']}/close"
-            response = requests.post(complete_url, headers=get_headers())
+            response = requests.post(f"{BASE_URL}/tasks/{task['id']}/close", headers=get_headers())
             if response.status_code == 204:
-                clear_lines(len(filtered_tasks) + 3)  # Clear everything including header
+                clear_lines(len(filtered_tasks) + 3)
                 print(f"{Colors.GREEN}✓ Completed: {task['content']}{Colors.RESET}")
                 filtered_tasks.pop(current_idx)
                 if current_idx >= len(filtered_tasks) and current_idx > 0:
@@ -326,19 +163,16 @@ def interactive_mode(filter_type):
                 if not filtered_tasks:
                     print(f"{Colors.GREEN}{Colors.BOLD}🎉 All tasks completed! 🎉{Colors.RESET}")
                     break
-                import time
                 time.sleep(0.5)
-                clear_lines(1)  # Clear success message
-                display_tasks(current_idx, full_redraw=True)  # Redraw everything
+                clear_lines(1)
+                display_tasks(current_idx, full_redraw=True)
             else:
                 clear_lines(len(filtered_tasks) + 2)
                 print(f"{Colors.RED}Error completing task{Colors.RESET}")
-                import time
                 time.sleep(1)
-        elif ch in ['d', 'D']:  # Delete task
+        elif ch in ['d', 'D']:  # Delete
             task = filtered_tasks[current_idx]
-            delete_url = f"{BASE_URL}/tasks/{task['id']}"
-            response = requests.delete(delete_url, headers=get_headers())
+            response = requests.delete(f"{BASE_URL}/tasks/{task['id']}", headers=get_headers())
             if response.status_code == 204:
                 clear_lines(len(filtered_tasks) + 3)
                 print(f"{Colors.YELLOW}✓ Deleted: {task['content']}{Colors.RESET}")
@@ -348,111 +182,85 @@ def interactive_mode(filter_type):
                 if not filtered_tasks:
                     print(f"{Colors.GREEN}No more tasks!{Colors.RESET}")
                     break
-                import time
                 time.sleep(0.5)
-                clear_lines(1)  # Clear success message
-                display_tasks(current_idx, full_redraw=True)  # Redraw everything
+                clear_lines(1)
+                display_tasks(current_idx, full_redraw=True)
             else:
                 clear_lines(len(filtered_tasks) + 2)
                 print(f"{Colors.RED}Error deleting task{Colors.RESET}")
-                import time
                 time.sleep(1)
-        elif ch in ['e', 'E']:  # Edit task
+        elif ch in ['e', 'E']:  # Edit
             task = filtered_tasks[current_idx]
             clear_lines(len(filtered_tasks) + 3)
             print(f"{Colors.YELLOW}Editing: {task['content']}{Colors.RESET}")
             print(f"{Colors.CYAN}New content (or press Enter to cancel): {Colors.RESET}", end='')
-            
-            # Temporarily restore normal terminal mode for input
             fd = sys.stdin.fileno()
             old_settings = termios.tcgetattr(fd)
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-            
             new_content = input().strip()
-            
             if new_content:
-                update_url = f"{BASE_URL}/tasks/{task['id']}"
-                response = requests.post(update_url, headers=get_headers(), 
-                                       json={'content': new_content})
+                response = requests.post(f"{BASE_URL}/tasks/{task['id']}", headers=get_headers(), json={'content': new_content})
                 if response.status_code == 200:
                     task['content'] = new_content
-                    clear_lines(2)  # Clear edit prompts
+                    clear_lines(2)
                     print(f"{Colors.GREEN}✓ Updated task{Colors.RESET}")
-                    import time
                     time.sleep(0.5)
                     clear_lines(1)
-                    display_tasks(current_idx, full_redraw=True)  # Redraw everything
+                    display_tasks(current_idx, full_redraw=True)
                 else:
                     clear_lines(2)
                     print(f"{Colors.RED}Error updating task{Colors.RESET}")
-                    import time
                     time.sleep(1)
                     clear_lines(1)
-                    display_tasks(current_idx, full_redraw=True)  # Redraw on error
+                    display_tasks(current_idx, full_redraw=True)
             else:
-                clear_lines(2)  # Clear edit prompts if cancelled
-                display_tasks(current_idx, full_redraw=True)  # Redraw after cancel
-        elif ch in ['a', 'A']:  # Add new task
+                clear_lines(2)
+                display_tasks(current_idx, full_redraw=True)
+        elif ch in ['a', 'A']:  # Add
             clear_lines(len(filtered_tasks) + 3)
             print(f"{Colors.CYAN}Add new task (or press Enter to cancel): {Colors.RESET}", end='')
-            
-            # Temporarily restore normal terminal mode for input
             fd = sys.stdin.fileno()
             old_settings = termios.tcgetattr(fd)
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-            
-            new_task_content = input().strip()
-            
-            if new_task_content:
-                # Create the task with appropriate due date or project
-                success = False
-                if filter_type in ['today', 'tomorrow']:
-                    success = create_task(new_task_content, due_string=filter_type, silent=True)
-                else:
-                    success = create_task(new_task_content, project_name=filter_type, silent=True)
-                
+            new_content = input().strip()
+            if new_content:
+                success = create_task(new_content, due_string=filter_type if filter_type in ['today', 'tomorrow'] else None,
+                                      project_name=filter_type if filter_type not in ['today', 'tomorrow'] else None, silent=True)
                 if success:
-                    # Refresh to get the new task
                     print(f"{Colors.YELLOW}⟳ Refreshing...{Colors.RESET}")
-                    if refresh_tasks():
-                        clear_lines(2)  # Clear the add prompt and refreshing message
-                        print(f"{Colors.GREEN}✓ Task added: {new_task_content}{Colors.RESET}")
-                        # Find the new task and select it
-                        for idx, task in enumerate(filtered_tasks):
-                            if task['content'] == new_task_content:
-                                current_idx = idx
-                                break
-                        import time
-                        time.sleep(0.5)
-                        clear_lines(1)  # Clear the success message
-                        display_tasks(current_idx, full_redraw=True)  # Redraw everything
+                    filtered_tasks = refresh_tasks()
+                    clear_lines(2)
+                    print(f"{Colors.GREEN}✓ Task added: {new_content}{Colors.RESET}")
+                    for idx, task in enumerate(filtered_tasks):
+                        if task['content'] == new_content:
+                            current_idx = idx
+                            break
+                    time.sleep(0.5)
+                    clear_lines(1)
+                    display_tasks(current_idx, full_redraw=True)
                 else:
                     clear_lines(1)
                     print(f"{Colors.RED}Failed to add task{Colors.RESET}")
-                    import time
                     time.sleep(1)
                     clear_lines(1)
-                    display_tasks(current_idx, full_redraw=True)  # Redraw on failure
-            else:
-                clear_lines(1)  # Clear the add prompt if cancelled
-                display_tasks(current_idx, full_redraw=True)  # Redraw after cancel
-        elif ch in ['r', 'R']:  # Refresh
-            # Clear everything including header
-            clear_lines(len(filtered_tasks) + 3)
-            print(f"{Colors.YELLOW}⟳ Refreshing...{Colors.RESET}")
-            if refresh_tasks():
-                clear_lines(1)  # Clear loading message
-                if not filtered_tasks:
-                    print(f"{Colors.YELLOW}No tasks after refresh{Colors.RESET}")
-                    break
-                current_idx = min(current_idx, len(filtered_tasks) - 1)
-                display_tasks(current_idx, full_redraw=True)  # Redraw with header
+                    display_tasks(current_idx, full_redraw=True)
             else:
                 clear_lines(1)
-                print(f"{Colors.RED}Failed to refresh{Colors.RESET}")
-                import time
-                time.sleep(1)
-                display_tasks(current_idx, full_redraw=True)  # Redraw even on failure
+                display_tasks(current_idx, full_redraw=True)
+        elif ch in ['r', 'R']:  # Refresh
+            clear_lines(len(filtered_tasks) + 3)
+            print(f"{Colors.YELLOW}⟳ Refreshing...{Colors.RESET}")
+            filtered_tasks = refresh_tasks()
+            if not filtered_tasks:
+                clear_lines(1)
+                print(f"{Colors.YELLOW}No tasks after refresh{Colors.RESET}")
+                break
+            current_idx = min(current_idx, len(filtered_tasks) - 1)
+            clear_lines(1)
+            display_tasks(current_idx, full_redraw=True)
+            if not filtered_tasks:
+                print(f"{Colors.YELLOW}No tasks after refresh{Colors.RESET}")
+                break
 
 def main():
     if len(sys.argv) < 2:
@@ -468,38 +276,18 @@ def main():
         print("  todo shopping list                - List Shopping project tasks")
         sys.exit(1)
 
-    # Interactive mode (format: todo -i <filter>)
     if sys.argv[1] == '-i' and len(sys.argv) == 3:
         interactive_mode(sys.argv[2])
-        sys.exit(0)
-    
-    # Interactive mode (format: todo <project> -i)
-    if len(sys.argv) == 3 and sys.argv[2] == '-i':
+    elif len(sys.argv) == 3 and sys.argv[2] == '-i':
         interactive_mode(sys.argv[1])
-        sys.exit(0)
-
-    # List mode
-    if len(sys.argv) == 3 and sys.argv[2] == 'list':
-        filter_name = sys.argv[1]
-        if filter_name in ['today', 'tomorrow']:
-            list_tasks(filter_name)
-        else:
-            # List project tasks
-            list_project_tasks(filter_name)
-        sys.exit(0)
-
-    # Create task mode
-    if len(sys.argv) == 3:
+    elif len(sys.argv) == 3 and sys.argv[2] == 'list':
+        list_tasks(sys.argv[1])
+    elif len(sys.argv) == 3:
         command = sys.argv[1]
-        task_content = sys.argv[2]
-
-        if command == 'today':
-            create_task(task_content, 'today')
-        elif command == 'tomorrow':
-            create_task(task_content, 'tomorrow')
-        else:
-            # Assume it's a project name (like 'shopping')
-            create_task(task_content, project_name=command)
+        content = sys.argv[2]
+        due = command if command in ['today', 'tomorrow'] else None
+        project = command if command not in ['today', 'tomorrow'] else None
+        create_task(content, due_string=due, project_name=project)
     else:
         print("Error: Invalid command format")
 
