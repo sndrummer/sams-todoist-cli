@@ -35,7 +35,7 @@ A dead simple command-line interface for Todoist. No bloat, just the essentials.
 ./todo shopping list                # List Shopping project tasks
 ```
 
-### Interactive Mode (Mark Tasks Complete)
+### Interactive Mode (Enhanced)
 
 ```bash
 ./todo -i today                     # Interactive mode for today's tasks
@@ -44,13 +44,22 @@ A dead simple command-line interface for Todoist. No bloat, just the essentials.
 ./todo shopping -i                  # Also works
 ```
 
-In interactive mode:
-- Enter a task number to mark it complete
-- Press 'q' to quit
+Interactive mode features:
+- **Navigation**: 
+  - Arrow keys (↑/↓) or vim keys (j/k/h/l)
+- **Actions**:
+  - **Enter**: Complete the selected task
+  - **a**: Add a new task to current view
+  - **e**: Edit the selected task inline
+  - **d**: Delete the selected task
+  - **r**: Refresh task list from server
+  - **q**: Quit
+
+The interactive mode displays inline with colored output and a green ➤ selector. Non-selected tasks are dimmed for better focus.
 
 ## Features
 
-- ✅ Super minimal - one file, ~200 lines
+- ✅ Super minimal - one file, ~400 lines (with fancy TUI)
 - ✅ Create tasks for today/tomorrow with natural syntax
 - ✅ Project support (case-insensitive, auto-creates projects)
 - ✅ Interactive task completion

@@ -47,10 +47,25 @@ This is a minimal Todoist CLI that Sam wanted - extremely stripped down and simp
 
 ## Implementation Notes
 
-1. **No Checkboxes in Interactive Mode**: Just numbers (e.g., "1. Task name") since we're prompting for numbers anyway
-2. **Project Name Flexibility**: Both `shopping` and `Shopping` work for the same project
-3. **Error Handling**: Minimal - just status codes printed if something fails
-4. **No Emoji by Default**: Only used for success indicators (✓) and completion celebration (🎉)
+1. **Interactive Mode Design**: 
+   - Inline display (not fullscreen) with ANSI colors
+   - Arrow keys + vim navigation (hjkl)
+   - Green ➤ selector with dimmed unselected items
+   - Header shown once, tasks refresh without duplication
+   
+2. **Project Handling**: 
+   - Case-insensitive project names
+   - Auto-creates projects if they don't exist
+   - No "#" or "PROJECT" terminology in UI (just "SHOPPING" not "#SHOPPING PROJECT")
+
+3. **Terminal Tricks**:
+   - Uses ANSI escape codes for colors and cursor movement
+   - `\033[nA` to move up n lines
+   - `\033[J` to clear from cursor to end of screen
+   - Careful line counting to avoid display drift
+
+4. **Error Handling**: Minimal - just status codes printed if something fails
+5. **Hidden Features**: 'c' key also completes tasks (not shown in help)
 
 ## Sam's Requirements (Original Request)
 - "very fucking stripped down and simple"
