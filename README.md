@@ -1,6 +1,6 @@
 # Todoist CLI
 
-A dead simple command-line interface for Todoist. No bloat, just the essentials.
+A simple command-line interface for Todoist for Linux/macOS.
 
 ## Setup
 
