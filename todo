@@ -2,6 +2,7 @@
 
 import sys
 import os
+import json
 import requests
 import termios
 import tty
@@ -258,9 +259,52 @@ def interactive_mode(filter_type):
             current_idx = min(current_idx, len(filtered_tasks) - 1)
             clear_lines(1)
             display_tasks(current_idx, full_redraw=True)
-            if not filtered_tasks:
-                print(f"{Colors.YELLOW}No tasks after refresh{Colors.RESET}")
-                break
+
+def project_selector():
+    projects = get_projects()
+    options = [('Today', 'today'), ('Tomorrow', 'tomorrow')] + [(p['name'], p['name']) for p in projects]
+    if not options:
+        print("No lists available")
+        return
+
+    def display_selector(current_idx, full_redraw=False, initial=False):
+        if full_redraw:
+            header_text = "SELECT LIST"
+            padding = max(0, (32 - len(header_text)) // 2)
+            line = "═" * padding
+            if initial:
+                print(f"\n{Colors.CYAN}{Colors.BOLD}{line} {header_text} {line}{Colors.RESET}")
+            else:
+                print(f"{Colors.CYAN}{Colors.BOLD}{line} {header_text} {line}{Colors.RESET}")
+        else:
+            print(f'\033[{len(options) + 2}A', end='')
+            print('\033[J', end='')
+        for i, (display_name, _) in enumerate(options):
+            if i == current_idx:
+                print(f"{Colors.GREEN}{Colors.BOLD}➤{Colors.RESET} {Colors.GREEN}{display_name}{Colors.RESET}")
+            else:
+                print(f"  {Colors.DIM}{display_name}{Colors.RESET}")
+        print(f"\n{Colors.MAGENTA}Enter: Select | q: Quit{Colors.RESET}")
+
+    current_idx = 0
+    display_selector(current_idx, full_redraw=True, initial=True)
+
+    while True:
+        ch = get_single_char()
+        if ch in ['q', 'Q', '\x03']:
+            clear_lines(len(options) + 3)
+            break
+        elif ch in ['UP', 'k', 'K', 'h', 'H']:
+            current_idx = max(0, current_idx - 1)
+            display_selector(current_idx)
+        elif ch in ['DOWN', 'j', 'J', 'l', 'L']:
+            current_idx = min(len(options) - 1, current_idx + 1)
+            display_selector(current_idx)
+        elif ch in ['\r', '\n']:
+            _, filter_type = options[current_idx]
+            clear_lines(len(options) + 3)
+            interactive_mode(filter_type)
+            break  # Exit after interacting with the selected list
 
 def main():
     if len(sys.argv) < 2:
@@ -271,12 +315,15 @@ def main():
         print("  todo tomorrow list                - List tomorrow's tasks")
         print("  todo -i today                     - Interactive mode for today")
         print("  todo -i tomorrow                  - Interactive mode for tomorrow")
+        print("  todo -i                           - Interactive menu to select list")
         print("  todo -i shopping                  - Interactive mode for Shopping project")
         print("  todo shopping \"Item\"              - Add to Shopping project")
         print("  todo shopping list                - List Shopping project tasks")
         sys.exit(1)
 
-    if sys.argv[1] == '-i' and len(sys.argv) == 3:
+    if len(sys.argv) == 2 and sys.argv[1] == '-i':
+        project_selector()
+    elif sys.argv[1] == '-i' and len(sys.argv) == 3:
         interactive_mode(sys.argv[2])
     elif len(sys.argv) == 3 and sys.argv[2] == '-i':
         interactive_mode(sys.argv[1])
