@@ -1,6 +1,6 @@
 # Todoist CLI
 
-A simple command-line interface for Todoist for Linux/macOS.
+A command-line interface for Todoist for Linux/macOS.
 
 ## Setup
 
@@ -35,9 +35,10 @@ A simple command-line interface for Todoist for Linux/macOS.
 ./todo shopping list                # List Shopping project tasks
 ```
 
-### Interactive Mode (Enhanced)
+### Interactive Mode
 
 ```bash
+./todo -i                           # Interactive menu to select a list
 ./todo -i today                     # Interactive mode for today's tasks
 ./todo -i tomorrow                  # Interactive mode for tomorrow's tasks
 ./todo -i shopping                  # Interactive mode for Shopping project
@@ -57,13 +58,14 @@ Interactive mode features:
 
 The interactive mode displays inline with colored output and a green ➤ selector. Non-selected tasks are dimmed for better focus.
 
+When using `./todo -i` without specifying a list, you'll get a menu to choose from Today, Tomorrow, or any of your existing projects.
+
 ## Features
 
-- ✅ Super minimal - one file, ~400 lines (with fancy TUI)
-- ✅ Create tasks for today/tomorrow with natural syntax
-- ✅ Project support (case-insensitive, auto-creates projects)
-- ✅ Interactive task completion
-- ✅ No unnecessary features or complexity
+- Create tasks for today/tomorrow with natural syntax
+- Project support (case-insensitive, auto-creates projects)
+- Interactive task management with add/edit/delete/complete
+- List selector menu for easy navigation between different task lists
 
 ## Examples
 

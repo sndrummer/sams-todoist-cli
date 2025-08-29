@@ -2,7 +2,6 @@
 
 import sys
 import os
-import json
 import requests
 import termios
 import tty
@@ -104,10 +103,12 @@ def clear_lines(n):
         print('\033[1A\033[2K', end='')
     print('\r', end='')
 
-def interactive_mode(filter_type):
+def interactive_mode(filter_type, initial_newline=True):
     project_id = get_project_id(filter_type) if filter_type not in ['today', 'tomorrow'] else None
     if filter_type not in ['today', 'tomorrow'] and not project_id:
         print(f"Project '{filter_type}' not found")
+        time.sleep(1)
+        clear_lines(1)
         return
 
     def refresh_tasks():
@@ -117,35 +118,43 @@ def interactive_mode(filter_type):
     filtered_tasks = refresh_tasks()
     if not filtered_tasks:
         print(f"No incomplete tasks for {filter_type}")
+        time.sleep(1)
+        clear_lines(1)
         return
 
-    def display_tasks(current_idx, full_redraw=False, initial=False):
+    def display_tasks(current_idx, full_redraw=False, initial=False, initial_newline=True):
         if full_redraw:
             header_text = filter_type.upper()
             padding = max(0, (32 - len(header_text)) // 2)
             line = "═" * padding
             if initial:
-                print(f"\n{Colors.CYAN}{Colors.BOLD}{line} {header_text} {line}{Colors.RESET}")
+                if initial_newline:
+                    print(f"\n{Colors.CYAN}{Colors.BOLD}{line} {header_text} {line}{Colors.RESET}")
+                else:
+                    print(f"{Colors.CYAN}{Colors.BOLD}{line} {header_text} {line}{Colors.RESET}")
             else:
                 print(f"{Colors.CYAN}{Colors.BOLD}{line} {header_text} {line}{Colors.RESET}")
         else:
-            print(f'\033[{len(filtered_tasks) + 2}A', end='')
+            print(f'\033[{len(filtered_tasks) + 1}A', end='')
             print('\033[J', end='')
         for i, task in enumerate(filtered_tasks):
             if i == current_idx:
-                print(f"{Colors.GREEN}{Colors.BOLD}➤{Colors.RESET} {Colors.GREEN}{task['content']}{Colors.RESET}")
+                print(f"{Colors.GREEN}{Colors.BOLD}➤{Colors.RESET} {Colors.GREEN}{task['content']}{Colors.RESET} {Colors.MAGENTA}(Ent/c to complete){Colors.RESET}")
             else:
                 print(f"  {Colors.DIM}{task['content']}{Colors.RESET}")
-        print(f"\n{Colors.MAGENTA}Enter: Complete | a: Add | e: Edit | d: Delete | r: Refresh | q: Quit{Colors.RESET}")
+        print(f"{Colors.MAGENTA}a:Add|e:Edit|d:Del|r:Ref|m:Menu|q:Quit{Colors.RESET}")
 
     current_idx = 0
-    display_tasks(current_idx, full_redraw=True, initial=True)
+    display_tasks(current_idx, full_redraw=True, initial=True, initial_newline=initial_newline)
 
     while filtered_tasks:
         ch = get_single_char()
         if ch in ['q', 'Q', '\x03']:
-            clear_lines(len(filtered_tasks) + 3)
-            break
+            clear_lines(len(filtered_tasks) + 2)
+            return
+        elif ch in ['m', 'M']:
+            clear_lines(len(filtered_tasks) + 2)
+            return
         elif ch in ['UP', 'k', 'K', 'h', 'H']:
             current_idx = max(0, current_idx - 1)
             display_tasks(current_idx)
@@ -156,14 +165,16 @@ def interactive_mode(filter_type):
             task = filtered_tasks[current_idx]
             response = requests.post(f"{BASE_URL}/tasks/{task['id']}/close", headers=get_headers())
             if response.status_code == 204:
-                clear_lines(len(filtered_tasks) + 3)
+                clear_lines(len(filtered_tasks) + 2)
                 print(f"{Colors.GREEN}✓ Completed: {task['content']}{Colors.RESET}")
                 filtered_tasks.pop(current_idx)
                 if current_idx >= len(filtered_tasks) and current_idx > 0:
                     current_idx -= 1
                 if not filtered_tasks:
                     print(f"{Colors.GREEN}{Colors.BOLD}🎉 All tasks completed! 🎉{Colors.RESET}")
-                    break
+                    time.sleep(0.5)
+                    clear_lines(2)
+                    return
                 time.sleep(0.5)
                 clear_lines(1)
                 display_tasks(current_idx, full_redraw=True)
@@ -171,18 +182,22 @@ def interactive_mode(filter_type):
                 clear_lines(len(filtered_tasks) + 2)
                 print(f"{Colors.RED}Error completing task{Colors.RESET}")
                 time.sleep(1)
+                clear_lines(1)
+                display_tasks(current_idx, full_redraw=True)
         elif ch in ['d', 'D']:  # Delete
             task = filtered_tasks[current_idx]
             response = requests.delete(f"{BASE_URL}/tasks/{task['id']}", headers=get_headers())
             if response.status_code == 204:
-                clear_lines(len(filtered_tasks) + 3)
+                clear_lines(len(filtered_tasks) + 2)
                 print(f"{Colors.YELLOW}✓ Deleted: {task['content']}{Colors.RESET}")
                 filtered_tasks.pop(current_idx)
                 if current_idx >= len(filtered_tasks) and current_idx > 0:
                     current_idx -= 1
                 if not filtered_tasks:
                     print(f"{Colors.GREEN}No more tasks!{Colors.RESET}")
-                    break
+                    time.sleep(0.5)
+                    clear_lines(2)
+                    return
                 time.sleep(0.5)
                 clear_lines(1)
                 display_tasks(current_idx, full_redraw=True)
@@ -190,9 +205,11 @@ def interactive_mode(filter_type):
                 clear_lines(len(filtered_tasks) + 2)
                 print(f"{Colors.RED}Error deleting task{Colors.RESET}")
                 time.sleep(1)
+                clear_lines(1)
+                display_tasks(current_idx, full_redraw=True)
         elif ch in ['e', 'E']:  # Edit
             task = filtered_tasks[current_idx]
-            clear_lines(len(filtered_tasks) + 3)
+            clear_lines(len(filtered_tasks) + 2)
             print(f"{Colors.YELLOW}Editing: {task['content']}{Colors.RESET}")
             print(f"{Colors.CYAN}New content (or press Enter to cancel): {Colors.RESET}", end='')
             fd = sys.stdin.fileno()
@@ -218,7 +235,7 @@ def interactive_mode(filter_type):
                 clear_lines(2)
                 display_tasks(current_idx, full_redraw=True)
         elif ch in ['a', 'A']:  # Add
-            clear_lines(len(filtered_tasks) + 3)
+            clear_lines(len(filtered_tasks) + 2)
             print(f"{Colors.CYAN}Add new task (or press Enter to cancel): {Colors.RESET}", end='')
             fd = sys.stdin.fileno()
             old_settings = termios.tcgetattr(fd)
@@ -249,15 +266,16 @@ def interactive_mode(filter_type):
                 clear_lines(1)
                 display_tasks(current_idx, full_redraw=True)
         elif ch in ['r', 'R']:  # Refresh
-            clear_lines(len(filtered_tasks) + 3)
+            clear_lines(len(filtered_tasks) + 2)
             print(f"{Colors.YELLOW}⟳ Refreshing...{Colors.RESET}")
             filtered_tasks = refresh_tasks()
-            if not filtered_tasks:
-                clear_lines(1)
-                print(f"{Colors.YELLOW}No tasks after refresh{Colors.RESET}")
-                break
-            current_idx = min(current_idx, len(filtered_tasks) - 1)
             clear_lines(1)
+            if not filtered_tasks:
+                print(f"{Colors.YELLOW}No tasks after refresh{Colors.RESET}")
+                time.sleep(1)
+                clear_lines(1)
+                return
+            current_idx = min(current_idx, len(filtered_tasks) - 1)
             display_tasks(current_idx, full_redraw=True)
 
 def project_selector():
@@ -277,14 +295,14 @@ def project_selector():
             else:
                 print(f"{Colors.CYAN}{Colors.BOLD}{line} {header_text} {line}{Colors.RESET}")
         else:
-            print(f'\033[{len(options) + 2}A', end='')
+            print(f'\033[{len(options) + 1}A', end='')
             print('\033[J', end='')
         for i, (display_name, _) in enumerate(options):
             if i == current_idx:
-                print(f"{Colors.GREEN}{Colors.BOLD}➤{Colors.RESET} {Colors.GREEN}{display_name}{Colors.RESET}")
+                print(f"{Colors.GREEN}{Colors.BOLD}➤{Colors.RESET} {Colors.GREEN}{display_name}{Colors.RESET} {Colors.MAGENTA}(Ent to select){Colors.RESET}")
             else:
                 print(f"  {Colors.DIM}{display_name}{Colors.RESET}")
-        print(f"\n{Colors.MAGENTA}Enter: Select | q: Quit{Colors.RESET}")
+        print(f"{Colors.MAGENTA}q:Quit{Colors.RESET}")
 
     current_idx = 0
     display_selector(current_idx, full_redraw=True, initial=True)
@@ -292,7 +310,7 @@ def project_selector():
     while True:
         ch = get_single_char()
         if ch in ['q', 'Q', '\x03']:
-            clear_lines(len(options) + 3)
+            clear_lines(len(options) + 2)
             break
         elif ch in ['UP', 'k', 'K', 'h', 'H']:
             current_idx = max(0, current_idx - 1)
@@ -302,9 +320,9 @@ def project_selector():
             display_selector(current_idx)
         elif ch in ['\r', '\n']:
             _, filter_type = options[current_idx]
-            clear_lines(len(options) + 3)
-            interactive_mode(filter_type)
-            break  # Exit after interacting with the selected list
+            clear_lines(len(options) + 2)
+            interactive_mode(filter_type, initial_newline=False)
+            display_selector(current_idx, full_redraw=True, initial=False)
 
 def main():
     if len(sys.argv) < 2:
